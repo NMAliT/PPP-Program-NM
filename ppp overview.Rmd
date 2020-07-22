@@ -1,0 +1,174 @@
+---
+title: "PPP and Business Landscape"
+author: "NCNMEDD"
+date: "7/7/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE, warning=FALSE,message=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(tidyverse)
+library(ggplot2)
+library(knitr)
+library(kableExtra)
+library(leaflet)
+```
+## PPP Usage for North Central NM Economic Development District
+
+```{r table formatting,echo=FALSE,warning=FALSE,message=FALSE}
+tableformat <- function(x){
+  x %>% 
+    kable (digits=2, format.args = list(big.mark = ",",scientific=FALSE)) %>%
+    kable_styling()
+}
+tablecondensed <- function(x){
+  x %>% 
+    kable (digits=2, format.args = list(big.mark = ",",scientific=FALSE)) %>%
+    kable_styling(full_width = F,position="left")
+}
+
+```
+
+```{r,echo=FALSE,warning=FALSE,message=FALSE}
+#this coded section is designated to pull files and filter state PPP data on NCNMEDD jurisdiction ZIP codes
+# these files can be found online at https://sba.app.box.com/s/v9culrhoi3y5x99bcl2idwzfk9rzf0yd or through the SBA website
+
+ppp <- read_csv("foia_up_to_150k_NM.csv")
+
+# New Mexico Zip codes were compiled in a csv file from https://www.zipcodestogo.com/New%20Mexico/
+
+nm_zip <- read_csv("NM Zips.csv")
+ppp <- ppp %>% filter(Zip %in% nm_zip$`Zip Code`)
+
+# NM zip codes are further filtered to only NCNM
+ncnmedd_zip <- nm_zip %>% filter(County %in% c("Sandoval","Santa Fe","Rio Arriba","Mora","Los Alamos","San Miguel","Taos"))
+
+ncnm_ppp <- ppp %>% filter(Zip %in% ncnmedd_zip$`Zip Code`)
+ncnm_ppp <-left_join(ncnm_ppp,nm_zip[,c(1,3)],by=c("Zip"="Zip Code"))
+
+
+# Geolocations (latitude and longitude) from https://public.opendatasoft.com/explore/dataset/us-zip-code-latitude-and-longitude/table/?refine.state=NM
+nm_geo <- read_csv("NM LatLong.csv")
+
+
+## join lat long data for mapping
+ncnm_ppp <- left_join(ncnm_ppp,nm_geo[,c(1,4,5)],by="Zip")
+```
+
+### Overview
+The Paycheck Protection Program (PPP), under Title 1 of the CARES Act works to replace revenue for businesses through forgivable loans. PPP loans are not directly granted through the US government but by local institutions guaranteed by the Small Business Administration (SBA). Recipients of PPP loans self certify eligibility to the financial institution granting the loan but are subject to review by the SBA (all loans greater than $2mil will be automatically filed for review). In addition to eligibility self certification, all demographic information is voluntarily submitted to the granting institution and should be treated carefully when making claims about loan recipients. 
+
+### Geographic Summary of PPP Loans
+
+Within the NCNM district, county participation in the PPP loans program is in line with population size and economic activity in each county.The largest county participant of the PPP loan program being Santa Fe with 2,362 loans claimed and the smallest, Mora, with 15 loans claimed. Santa Fe also saw the largest number of jobs claimed to be returned on behalf of the loan.
+
+Two counties of note in the dataset are San Miguel County whose small loan sum was able to cover the cost of 957 employees in the county, and Mora County whose average loan amount was about half of the other counties receiving loans. 
+```{r Geography, echo=FALSE,warning=FALSE,message=FALSE}
+county_sum <- ncnm_ppp%>%group_by(County)%>%summarize("Sum Loan Amount" =sum(LoanAmount),"Number of Loans"=n(),"Average Loan Amount"=(sum(LoanAmount)/n())*100)
+
+##### County Retention of Jobs
+county_retention <- ncnm_ppp%>%group_by(County)%>%summarize("Jobs Retained" =sum(JobsRetained,na.rm = TRUE))
+
+county <- left_join(county_sum,county_retention)
+### Display of results
+tableformat(arrange(county,desc(county$`Sum Loan Amount`)))
+```
+
+
+The map below shows similar information to the table above on a Zip Code level. Each Zip code was translated to latitude and longitude. Hovering above each data point (blue for sum amount received and orange for sum jobs retained), provides information about what city the recipient claimed and the sum amount for that claim. 
+
+```{r Maps, echo=FALSE,message=FALSE,warning=FALSE}
+### Map of "jobs retained" and PPP allocations
+zip_sum <- ncnm_ppp%>%group_by(Latitude,Longitude,City)%>%summarize("Loan Amount" =sum(LoanAmount))
+
+zip_reten <- ncnm_ppp%>%group_by(Latitude,Longitude,City)%>%summarize("Jobs Retained" =sum(JobsRetained))
+zip_reten <- na.omit(zip_reten)
+
+leaflet()%>%
+  addTiles()%>%
+  addCircles(lat=zip_sum$Latitude,lng=zip_sum$Longitude,weight=1,radius=zip_sum$`Loan Amount`/2000,color="blue",label = paste("City:",zip_sum$City,"Loan Sum :",zip_sum$`Loan Amount`))%>%
+  addCircles(lat=zip_reten$Latitude,lng=zip_reten$Longitude,weight=1,radius=zip_reten$`Jobs Retained`*50,color="orange",label=paste("City:",zip_reten$City,"Jobs Retained:",zip_reten$`Jobs Retained`))
+
+# 
+# ### Map of city PPP allocations
+# zip_sum <- ncnm_ppp%>%group_by(Latitude,Longitude)%>%summarize("Loan Amount" =sum(LoanAmount))
+# 
+# leaflet(zip_sum)%>%
+#   addTiles()%>%
+#   addCircles(lat=~Latitude,lng=~Longitude,weight=1,radius=~`Loan Amount`/1000)
+
+
+# 
+# leaflet(zip_reten)%>%
+#   addTiles()%>%
+#   addCircles(lat=~Latitude,lng=~Longitude,weight=1,radius=~`Jobs Retained`*100,color="orange")
+
+```
+
+### Lender Summary
+
+Two fields in the PPP summary help inform the lenders granting PPP loans and the businesses who are receiving them. The first names the location at which the PPP loan was distributed. The table below shows the top 5 lenders, their average loan distributed and the number of counties which participated with that institution. Of the 191 total lenders, 90 institutions only granted a single loan. The difference between granted amount between institutions was fairly similar the average being 38,206.30. 
+
+```{r Lender, echo=FALSE,warning=FALSE,message=FALSE}
+ppp_sum <- ncnm_ppp%>%group_by(BusinessType)%>%summarize("Loan Amount" =sum(LoanAmount))
+
+lendercount <- ncnm_ppp%>%group_by(Lender)%>%summarize(unique(County))%>%summarise("Number of Counties"=n())
+
+lenders <- ncnm_ppp %>% group_by(Lender) %>% summarize("Loan Sum"=sum(LoanAmount),"Avg Loan Amt"= mean(LoanAmount,na.rm = TRUE),"Percent of Total" =(sum(LoanAmount)/sum(ncnm_ppp$LoanAmount)*100),"Number of Loans"=n())
+
+lenders <- left_join(lenders, lendercount)
+lenders <- lenders %>% arrange(desc(`Loan Sum`))
+lend_display <- lenders[c(1:5
+                          #,seq(from=length(lenders$Lender)-4,to=length(lenders$Lender),by=1)
+                          ),]
+
+tableformat(lend_display)
+
+#plot1 <-plot(lenders$`Avg Loan Amt`)
+
+```
+
+Below summarizes the Business types that were granted PPP loans, which, aligned with the goal of the program, lie mostly with LLCs.Trusts, cooperatives, and non-profit child care centers were the least likely to participate in the program. 
+
+```{r Business Type, echo=FALSE,warning=FALSE,message=FALSE}
+businessty <- ncnm_ppp%>%group_by(BusinessType)%>%summarize("Pct of PPP Distributed" =(sum(LoanAmount)/sum(ncnm_ppp$LoanAmount))*100,"Sum of PPP Distributed"=sum(LoanAmount), "Number of establishments"=n(),"Avg Distribution"=mean(LoanAmount))
+
+tableformat(arrange(businessty,desc(businessty$`Pct of PPP Distributed`)))
+```
+
+### PPP Recipient Demographic Information
+
+As stated above, all demographic information was voluntarily submitted by loan recipients and may or may not have been requested by the financial institutions granting the loans. For this reason, the population size of respondents for questions regarding demographics is very low (averaging under 20% response rate). 
+
+
+```{r Gender, echo=FALSE,warning=FALSE,message=FALSE}
+gender <- ncnm_ppp%>%group_by(Gender)%>%summarize("Average Loan Amount" =mean(LoanAmount),"Count"=n(),"Sum Loan Amount"=sum(LoanAmount))
+
+gender$`Proportion of Response` <- c(gender[1:2,]$`Count`/sum(gender[1:2,]$`Count`)*100,0)
+tablecondensed(gender)
+
+```
+One item of note, either because of prompt from granting institutions or higher willingness to respond, is the question of gender owned business (female vs male owned) had the highest response rate (25.15% or 833 respondents) with 31.69% of those who responded being female and 68.31% being male. 
+
+```{r Veteran, echo=FALSE,warning=FALSE,message=FALSE}
+veteran <- ncnm_ppp%>%group_by(Veteran)%>%summarize("Average Loan Amount" = mean(LoanAmount),"Count"=n(), "Sum Loan Amount"= sum(LoanAmount),"Percent of total" =(sum(LoanAmount)/sum(ncnm_ppp$LoanAmount))*100)
+tablecondensed(arrange(veteran,veteran$`Sum Loan Amount`))
+
+```
+```{r RaceEthnicity, echo=FALSE,warning=FALSE,message=FALSE}
+raceEth <- ncnm_ppp%>%group_by(RaceEthnicity)%>%summarize("Average Loan Amount" = mean(LoanAmount),"Count"=n(),"Sum Loan Amount" = sum(LoanAmount),"Percent of total" =(sum(LoanAmount)/sum(ncnm_ppp$LoanAmount))*100)
+
+tablecondensed(arrange(raceEth,raceEth$'Sum Loan Amount'))
+
+```
+
+
+### Resources
+
+United States CARES Act
+https://home.treasury.gov/policy-issues/cares
+
+PPP Overview
+https://www.rudmanwinchell.com/paycheck-protection-program-ppp-summary/
